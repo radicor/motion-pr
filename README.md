@@ -10,6 +10,8 @@ The repository's first PR explains itself: [`docs/explainers/pr-1-pr-motion-expl
 
 One self-contained HTML file. No CDN, no build step, no headless browser, no API keys. Inline CSS on a fixed timeline, so it plays offline and is committable next to the code it describes.
 
+Plus the two things GitHub can actually show in a PR comment: a mermaid beat-chain diagram (renders inline in comments and descriptions) and the contact-sheet PNG (renders as an image). The HTML is the full animation; the mermaid and PNG are what the reviewer sees without leaving the PR.
+
 Seven beats, roughly four seconds each:
 
 | Beat | What it says |
@@ -30,21 +32,25 @@ Seven beats, roughly four seconds each:
 # 1. gate the diff and build the storyboard
 python3 skills/software-development/pr-motion-explainer/scripts/pr_brief.py --pr 123 --out brief.json
 
-# 2. render the animated HTML
+# 2. render the animated HTML, plus the mermaid snippet for the PR comment
 python3 skills/software-development/pr-motion-explainer/scripts/render.py brief.json --out docs/explainers/pr-123-my-change.html
+python3 skills/software-development/pr-motion-explainer/scripts/render.py brief.json --mermaid --out pr-123-mermaid.md
+
+# 3. render the contact-sheet PNG for the PR comment (stdlib only)
+python3 skills/software-development/pr-motion-explainer/scripts/poster.py brief.json --out docs/explainers/pr-123-contact-sheet.png
 ```
 
 For a branch with no PR yet, swap `--pr 123` for `--range origin/main...HEAD`. The beats are identical, only the byline differs.
 
 Exit codes: `0` non-trivial, `3` trivial or empty diff, `1` fetch error. Exit `3` is a valid answer, not a failure.
 
-Then commit the HTML and link the raw URL in the PR comment. GitHub will not play inline HTML from a comment, so the file has to be committed:
+GitHub will not render inline HTML from a comment, so commit the HTML and link the raw URL. The comment itself should lead with the mermaid diagram and the contact-sheet PNG, both of which GitHub renders natively:
 
 ```bash
-git add docs/explainers/pr-123-my-change.html
+git add docs/explainers/pr-123-my-change.html docs/explainers/pr-123-contact-sheet.png
 git commit -m "docs: add motion explainer for #123"
 git push
-gh pr comment 123 --body "Explainer (7 beats, 31s): <raw-url-pinned-to-sha>"
+{ cat pr-123-mermaid.md; echo; echo "![beats](<raw-url-pinned-to-sha>/docs/explainers/pr-123-contact-sheet.png)"; echo "[Animated explainer](<raw-url-pinned-to-sha>/docs/explainers/pr-123-my-change.html)"; } | gh pr comment 123 --body-file -
 ```
 
 Pin the URL to the commit SHA. A link on a moving ref changes under the reader if you ever re-render.
@@ -74,6 +80,7 @@ skills/software-development/pr-motion-explainer/
     publishing.md             where the artifact goes, and the ffmpeg caveat
   scripts/
     pr_brief.py               gate + storyboard, emits brief JSON
+    poster.py                 brief JSON -> contact-sheet PNG, no browser needed
     render.py                 brief JSON -> animated HTML
 docs/explainers/
   pr-1-pr-motion-explainer.html         animated, 31s
@@ -90,22 +97,45 @@ Checked by running it, not by reading it:
 
 | Case | Result |
 |---|---|
-| docs-only commit | `TRIVIAL`, exit 3 |
-| one-line typo in `src/auth.py` | `TRIVIAL`, exit 3 |
+| docs-only commit | `TRIVIAL`, exit 3, reason names the thresholds missed |
+| one-line typo in `src/auth.py` | `TRIVIAL`, exit 3, reason names the thresholds missed |
+| 400-line lockfile-only bump | `TRIVIAL`, exit 3, no meaningful files |
 | session revocation: 3 files, migration, dependency change | `NON-TRIVIAL`, exit 0, 7 beats |
 | PR #1 via `gh` | `NON-TRIVIAL`, 7 beats, 31s |
 | all 7 beats at a 577px viewport | one visible card, zero overflow, zero overlap |
 
 Generating this PR's own explainer found four defects that testing against throwaway repos had not: `.gitignore` led every beat because git emits dotfiles first in a fresh diff; the change beat read "logic change spread across the diff" when no path signal matched; markdown from the PR body rendered as literal backticks; and `render.py` used `re` without importing it.
 
+Running the skill against a with-skill/baseline harness found six more, all now fixed:
+
+- `judge()` counted every changed line, including lines in files it had already
+  discarded, so a 400-line lockfile bump tripped the 40-line threshold and
+  animated anyway. It now counts only meaningful files.
+- A `TRIVIAL` verdict reported `too small to animate` with no threshold attached,
+  while the skill required telling the reader which one fired. It now reports
+  the thresholds the diff came up against.
+- The publish path required committing a contact-sheet PNG that no shipped
+  script could produce. `poster.py` now generates it in pure stdlib.
+- `poster.py`'s first draft wrapped text in characters instead of pixels, so
+  headlines overflowed their card, and it rendered non-ASCII as empty boxes.
+- The `frames/` recipe was not reproducible from the command it documented.
+- `--force` wrote the beats to `brief.json` but still exited `3`, so the
+  `pr_brief.py ... && render.py ...` chain the usage docs recommend aborted
+  before rendering. A forced run now exits `0`.
+
 Not verified: the mp4 rendering path in `references/publishing.md`. `ffmpeg` is not installed in this environment, so that route is documented but untested.
 
 ## Demo assets
 
-`frames/` holds one PNG per beat, captured at each beat's midpoint by pausing the CSS animations and seeking `currentTime`. The contact sheet is a 2x4 grid of those frames.
+`docs/explainers/pr-1-contact-sheet.png` is produced by `poster.py` from `brief.json`. `frames/` holds one PNG per beat, captured at each beat's midpoint by pausing the CSS animations and seeking `currentTime` in a real browser.
 
 ```bash
+# the poster: stdlib only, reproducible anywhere
+python3 skills/software-development/pr-motion-explainer/scripts/poster.py brief.json --out docs/explainers/pr-1-contact-sheet.png
+
+# the animated page and its stacked-for-print variant
+python3 skills/software-development/pr-motion-explainer/scripts/render.py brief.json --out docs/explainers/pr-1-pr-motion-explainer.html
 python3 skills/software-development/pr-motion-explainer/scripts/render.py brief.json --out docs/explainers/pr-1-pr-motion-explainer.static.html --static
 ```
 
-The static build stacks every beat into one scrolling page, which is what you want in a document and unusable as a video source.
+`frames/` needs a browser, so those commands do not regenerate it; the poster is the artifact that is. The static build stacks every beat into one scrolling page, which is what you want in a document and unusable as a video source.

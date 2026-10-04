@@ -165,6 +165,24 @@ def added_snippets(diff_text: str, per_file: int = 3) -> dict[str, list[str]]:
     return snips
 
 
+def line_counts_by_file(diff_text: str) -> dict[str, tuple[int, int]]:
+    """(added, deleted) per file, keyed by the same paths collect_files returns."""
+    counts: dict[str, list[int]] = {}
+    path = None
+    for line in diff_text.splitlines():
+        if line.startswith("+++ b/"):
+            path = line[6:].strip()
+            if path and path != "/dev/null":
+                counts.setdefault(path, [0, 0])
+        elif path is None:
+            continue
+        elif line.startswith("+") and not line.startswith("+++"):
+            counts[path][0] += 1
+        elif line.startswith("-") and not line.startswith("---"):
+            counts[path][1] += 1
+    return {p: (a, d) for p, (a, d) in counts.items()}
+
+
 # --- beats ---------------------------------------------------------------
 
 BEAT_ORDER = ["problem", "before", "change", "after", "proof", "cost", "recap"]
@@ -314,37 +332,69 @@ def rollback_note(pr: dict, risks: list[str]) -> str:
 
 
 def judge(pr: dict, diff_text: str, files: list[str]) -> dict:
-    added = len(re.findall(r"^\+(?!\+\+)", diff_text, re.M))
-    deleted = len(re.findall(r"^-(?!--)", diff_text, re.M))
+    counts = line_counts_by_file(diff_text)
     meaningful, ignorable, signals = classify_files(files)
-    reasons = []
+
+    # Count only lines in files the gate did not already discard. A 900-line
+    # lockfile bump is held out before the line threshold is applied, otherwise
+    # the churn trips MIN_CHANGED_LINES on its own and a docs-only or vendored
+    # diff animates anyway.
+    added = sum(counts.get(p, (0, 0))[0] for p in meaningful)
+    deleted = sum(counts.get(p, (0, 0))[1] for p in meaningful)
+    changed = added + deleted
+
+    reasons: list[str] = []
+    missed: list[str] = []
     if not meaningful:
         reasons.append("no meaningful files (docs/lockfile/vendor only)")
-    if added + deleted >= MIN_CHANGED_LINES:
-        reasons.append(f"{added + deleted} changed lines >= {MIN_CHANGED_LINES}")
+    if changed >= MIN_CHANGED_LINES:
+        reasons.append(f"{changed} changed lines >= {MIN_CHANGED_LINES}")
+    else:
+        missed.append(f"{changed} changed lines < {MIN_CHANGED_LINES}")
     if len(meaningful) >= MIN_FILES:
         reasons.append(f"{len(meaningful)} files >= {MIN_FILES}")
+    else:
+        missed.append(f"{len(meaningful)} meaningful file(s) < {MIN_FILES}")
+
     sensitive = [f for f in meaningful if SENSITIVE_PATH.search(f)]
-    enough_mass = (added + deleted) >= MIN_LINES_FOR_SENSITIVE
+    deps = [f for f in meaningful if DEPENDENCY_FILE.search(f)]
+    enough_mass = changed >= MIN_LINES_FOR_SENSITIVE
     if sensitive and enough_mass:
         reasons.append("touches a sensitive path: " + ", ".join(sensitive[:2]))
-    deps = [f for f in files if DEPENDENCY_FILE.search(f)]
+    elif sensitive:
+        missed.append(f"sensitive path {sensitive[0]} but only {changed} changed lines "
+                      f"< {MIN_LINES_FOR_SENSITIVE}")
     if deps and enough_mass:
         reasons.append("dependency change: " + ", ".join(
             DEPENDENCY_FILE.sub("", d).split("/")[0] or d for d in deps[:2]))
-    trivial = not reasons or (added + deleted < 5 and not (sensitive and enough_mass)
+    elif deps:
+        missed.append(f"dependency change {deps[0]} but only {changed} changed lines "
+                      f"< {MIN_LINES_FOR_SENSITIVE}")
+
+    trivial = not reasons or (changed < 5 and not (sensitive and enough_mass)
                               and not (deps and enough_mass))
+
+    # A trivial verdict has to say which threshold it came up against, otherwise
+    # "too small to animate" gives the reader nothing to argue with or tune.
+    if reasons:
+        stated = reasons
+    elif missed:
+        stated = ["too small to animate: " + "; ".join(missed)]
+    else:
+        stated = ["too small to animate"]
+
     return {
         "non_trivial": not trivial,
         "added": added,
         "deleted": deleted,
-        "changed_lines": added + deleted,
+        "changed_lines": changed,
         "files_total": len(files),
         "files_meaningful": meaningful,
         "files_ignored": ignorable,
         "signals": signals,
         "sensitive_paths": sensitive,
-        "reasons": reasons or ["too small to animate"],
+        "reasons": stated,
+        "thresholds_missed": missed,
     }
 
 
@@ -449,7 +499,10 @@ def main() -> int:
             print(f"brief written to {args.out}", file=sys.stderr)
     else:
         print(text)
-    return 0 if verdict["non_trivial"] else 3
+    # A forced run did the work, so it reports success. Returning 3 while the
+    # beats sit in brief.json breaks a `pr_brief.py ... && render.py ...`
+    # chain, which is how the usage docs tell people to run it.
+    return 0 if (verdict["non_trivial"] or (args.force and beats)) else 3
 
 
 if __name__ == "__main__":

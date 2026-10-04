@@ -69,6 +69,35 @@ def title(verdict: dict) -> str:
     return f"{verdict.get('changed_lines', 0)} lines"
 
 
+def mermaid_node(s: str) -> str:
+    """Make text safe inside a mermaid node label."""
+    text = clip(s, limit=90)
+    return text.replace('"', "'").replace("[", "(").replace("]", ")")
+
+
+def build_mermaid(brief: dict) -> str:
+    """Markdown snippet whose mermaid block renders the beat chain inline.
+
+    GitHub does not render HTML files, so the PR comment gets this diagram plus
+    a link to the animated HTML. Beats become a left-to-right flow; the headline
+    carries the information that would otherwise need the video.
+    """
+    beats = brief["beats"]
+    verdict = brief["verdict"]
+    src = brief["source"]
+    byline = f"#{src['pr']}" if src.get("pr") else (src.get("range") or "")
+    lines = ["```mermaid", "flowchart LR"]
+    for i, b in enumerate(beats):
+        label = f"{b['name']}: {mermaid_node(b['headline'])}"
+        lines.append(f'    b{i}["{label}"]')
+        if i:
+            lines.append(f"    b{i - 1} --> b{i}")
+    lines.append("```")
+    stats = f"{verdict['changed_lines']} lines across {len(verdict['files_meaningful'])} files"
+    header = f"**{mermaid_node(title(verdict))}** — {byline} · {stats} · {len(beats)} beats"
+    return header + "\n\n" + "\n".join(lines) + "\n"
+
+
 def build_html(brief: dict) -> str:
     src = brief["source"]
     verdict = brief["verdict"]
@@ -235,12 +264,20 @@ def main() -> int:
     ap.add_argument("--out", required=True, help="output HTML path")
     ap.add_argument("--static", action="store_true",
                     help="stack the scenes for print/GitHub-image use, no timeline")
+    ap.add_argument("--mermaid", action="store_true",
+                    help="emit a markdown mermaid snippet (renders in the PR comment) instead of HTML")
     args = ap.parse_args()
 
     data = json.loads(Path(args.brief).read_text())
     if not data.get("beats"):
         sys.stderr.write("brief has no beats (trivial PR? re-run with --force)\n")
         return 3
+    if args.mermaid:
+        out = Path(args.out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(build_mermaid(data))
+        print(f"{args.out}: mermaid snippet, {len(data['beats'])} beats", file=sys.stderr)
+        return 0
     doc = build_html(data)
     if args.static:
         doc = doc.replace("<body>", '<body class="static">', 1)
