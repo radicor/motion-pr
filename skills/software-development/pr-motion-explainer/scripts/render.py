@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -45,8 +46,19 @@ def esc(s: str) -> str:
 
 
 def clip(s: str, limit: int = 190) -> str:
-    """Truncate to one readable line. A cut-off sentence is worse than a short one."""
-    text = " ".join((s or "").split())
+    """Normalize markdown to plain text, then truncate to one readable line.
+
+    Beats come from PR bodies, which are markdown. Backticks and bold survive
+    into the video as literal characters, so strip them here rather than making
+    every beat hand-cleaned.
+    """
+    text = (s or "").replace("`", "")
+    text = re.sub(r"\*\*\*(.+?)\*\*\*", r"\1", text)
+    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
+    text = re.sub(r"(?<!\w)\*(?!\s)(.+?)(?<!\s)\*(?!\w)", r"\1", text)
+    text = re.sub(r"^#+\s*", "", text)
+    text = re.sub(r"^[-*+]\s+", "", text)
+    text = " ".join(text.split())
     return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
 
 
@@ -232,7 +244,9 @@ def main() -> int:
     doc = build_html(data)
     if args.static:
         doc = doc.replace("<body>", '<body class="static">', 1)
-    Path(args.out).write_text(doc)
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(doc)
     print(f"{args.out}: {len(data['beats'])} beats, "
           f"{TITLE_SECONDS + SCENE_SECONDS * len(data['beats']):.0f}s timeline", file=sys.stderr)
     return 0

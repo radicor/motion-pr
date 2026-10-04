@@ -59,6 +59,14 @@ DOC_ONLY = re.compile(r"(^|/)(docs?|documentation|examples?)/|\.(md|mdx|rst|txt)
 LOCKFILE = re.compile(r"(-lock\.yaml|\.lock|package-lock\.json|poetry\.lock)$", re.I)
 VENDOR = re.compile(r"(^|/)(vendor|third[_-]party|node_modules|dist|build)/", re.I)
 
+# Dotfile config noise (.gitignore, .editorconfig) is never the story. Without this,
+# a repo whose only non-doc change is a .gitignore gets that file as the lead beat.
+CONFIG_NOISE = re.compile(r"(^|/)\.[A-Za-z0-9_-]+$|^(\.gitignore|\.editorconfig)$", re.I)
+
+# SKILL.md and friends are the substance of a skill PR, not documentation of it.
+# DOC_ONLY matches *.md, so carve skill/plugin manifests back out as meaningful.
+MANIFEST = re.compile(r"(^|/)SKILL\.md$|(^|/)(AGENTS|CLAUDE|README)\.md$", re.I)
+
 # Signalled file kinds -> story beat hints. First match wins, per file.
 SIGNALS = [
     ("new endpoint", re.compile(r"(^|/)(routes?|controllers?|handlers?|endpoints?|api)/", re.I)),
@@ -90,7 +98,11 @@ def classify_files(paths: list[str]) -> tuple[list[str], list[str], list[str]]:
         if VENDOR.search(p) or LOCKFILE.search(p):
             ignorable.append(p)
             continue
-        if DOC_ONLY.search(p):
+        # order matters: a manifest is meaningful even though it ends in .md
+        if DOC_ONLY.search(p) and not MANIFEST.search(p):
+            ignorable.append(p)
+            continue
+        if CONFIG_NOISE.search(p):
             ignorable.append(p)
             continue
         meaningful.append(p)
@@ -168,7 +180,7 @@ def build_beats(pr: dict, diff_text: str, files: list[str], signals: list[str],
     snips = added_snippets(diff_text)
     changed_lines = added + deleted
 
-    lead = meaningful[0] if meaningful else (files[0] if files else "")
+    lead = rank_for_lead(meaningful)[0] if meaningful else (files[0] if files else "")
     headline = title or f"PR #{num}: {changed_lines} changed lines"
 
     beats = [
@@ -187,18 +199,18 @@ def build_beats(pr: dict, diff_text: str, files: list[str], signals: list[str],
         },
         {
             "name": "change",
-            "headline": describe_change(signals, changed_lines),
-            "detail": "; ".join(signals) if signals else "logic change spread across the diff.",
+            "headline": describe_change(signals, changed_lines, meaningful),
+            "detail": "; ".join(signals) if signals else describe_shape(meaningful),
             "code_refs": [
-                {"path": p, "added": snips.get(p, [])} for p in meaningful[:3]
+                {"path": p, "added": snips.get(p, [])} for p in rank_for_lead(meaningful)[:3]
             ],
         },
         {
             "name": "after",
             "headline": f"After: {file_count_phrase(len(meaningful))} touched",
             "detail": f"Reviewer focus: {', '.join(signals[:3])}" if signals
-            else "Reviewer focus: read the diff top to bottom.",
-            "code_refs": [{"path": p} for p in meaningful[:3]],
+            else f"Reviewer focus: {describe_shape(meaningful)}",
+            "code_refs": [{"path": p} for p in rank_for_lead(meaningful)[:3]],
         },
     ]
 
@@ -230,16 +242,49 @@ def build_beats(pr: dict, diff_text: str, files: list[str], signals: list[str],
     return beats
 
 
-def describe_change(signals: list[str], changed_lines: int) -> str:
+def describe_change(signals: list[str], changed_lines: int,
+                    files: list[str]) -> str:
     if signals:
         return f"Change: {signals[0]}"
     if changed_lines >= 200:
-        return "Change: large refactor"
+        return f"Change: {describe_shape(files)}"
     return "Change: focused edit"
 
 
 def file_count_phrase(n: int) -> str:
     return "1 file" if n == 1 else f"{n} files"
+
+
+def rank_for_lead(files: list[str]) -> list[str]:
+    """Order files so the most reviewable one leads the beats.
+
+    Paths arrive from the diff in whatever order git emitted them, which puts
+    .gitignore and top-level dotfiles first. A reviewer wants the module that
+    actually changed behaviour, not the ignore list.
+    """
+    def score(p: str) -> tuple:
+        dotfile = 1 if CONFIG_NOISE.search(p) else 0
+        test = 1 if re.search(r"(^|/)(tests?|spec)/|\.(test|spec)\.", p, re.I) else 0
+        # tests and dotfiles sink; code files rise
+        return (dotfile or test, -len(p.split("/")), p)
+    return sorted(files, key=score)
+
+
+def describe_shape(files: list[str]) -> str:
+    """One honest clause about a diff that trips no path signal.
+
+    "logic change spread across the diff" is the kind of sentence that makes a
+    reviewer stop watching. Name the actual files instead.
+    """
+    if not files:
+        return "no reviewable files in the diff"
+    ranked = rank_for_lead(files)
+    lead = ranked[0].rsplit("/", 1)[-1]
+    if len(ranked) == 1:
+        return f"everything lands in {lead}"
+    others = [p.rsplit("/", 1)[-1] for p in ranked[1:4]]
+    tail = ", ".join(others[:-1]) + (" and " + others[-1] if len(others) > 1 else "")
+    return f"{lead} leads, with {tail}"
 
 
 def first_problem_sentence(body: str) -> str:

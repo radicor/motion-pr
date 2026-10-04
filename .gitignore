@@ -1,5 +1,8 @@
 __pycache__/
 *.pyc
+
+# Local scratch briefs and renders. Published explainers belong in
+# docs/explainers/ and must be committed -- the skill links them from PR
+# comments, so ignoring them here would break the workflow it documents.
 brief.json
-*-explainer.html
-*-explainer.static.html
+/*-explainer.html
