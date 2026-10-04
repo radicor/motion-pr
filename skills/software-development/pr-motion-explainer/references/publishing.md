@@ -4,18 +4,24 @@ The file is useless if it lives on your laptop. This is where it goes.
 
 ## The constraint
 
-GitHub will not render inline video from a `<video>` tag with a relative path, and
-a raw HTML file attached to a PR comment is not previewed either. So there is no
-"attach the animation" path. The two that work:
+GitHub does not render `.html` files: a raw HTML URL in a PR comment shows
+source, not the animation. There is no "attach the animation" path. So the PR
+comment carries two things that render natively, plus the HTML link for anyone
+who wants the motion:
 
-1. **Commit the HTML to the branch and link it.** Universal, reviewable, diffable.
-   Anyone with repo access can open it and the link survives in the thread
-   forever.
-2. **Render to a video and attach that**, when the repo wants a real `.mp4`.
-   GitHub plays `<video src=...>` from a committed file in the PR comment.
+1. **A mermaid snippet** (`render.py --mermaid`). GitHub renders `mermaid`
+   fenced blocks in comments and descriptions, so the beat chain is visible
+   inline. This is the in-thread summary.
+2. **The contact-sheet PNG**, made by `scripts/poster.py` and linked by raw URL.
+   Images render in comments; one 2x4 grid beats a paragraph. This is the
+   in-thread poster.
+3. **The HTML file**, committed and linked. It plays the actual timeline when
+   opened. GitHub will not play it in place.
+4. **An `.mp4`**, only when someone asks for a real video. ffmpeg is not a
+   dependency of this skill.
 
-Option 1 is the default. Option 2 needs `ffmpeg`, which this skill does not
-require and does not install.
+A comment with (1) and (2) tells the reviewer the shape of the change without
+leaving the PR. (3) is the full explainer.
 
 ## Path and commit
 
@@ -29,19 +35,38 @@ Use the PR number and a slug of the PR title. One file per PR; overwrite the
 previous render if you re-render rather than committing a second copy.
 
 ```bash
-git add docs/explainers/pr-123-session-revocation.html
+git add docs/explainers/pr-123-session-revocation.html \
+        docs/explainers/pr-123-contact-sheet.png
 git commit -m "docs: add motion explainer for #123"
 git push
 ```
+
+Commit the contact-sheet PNG next to the HTML; the mermaid snippet itself is
+inlined in the PR comment, so it needs no file of its own. Generate it with:
+
+```bash
+python3 <skill-dir>/scripts/poster.py brief.json \
+        --out docs/explainers/pr-123-contact-sheet.png
+```
+
+`poster.py` is stdlib only: it rasterises the brief itself with a built-in 5x7
+font and writes the PNG directly, so it needs no headless browser, no
+ImageMagick, and no Pillow even though none of those are dependencies of this
+skill. It folds text to ASCII, so a beat written in a non-Latin script loses
+those characters in the poster; the HTML still carries them.
 
 Put it in its own commit. Mixing the generated HTML into the feature commit
 makes the feature diff harder to read, which defeats the point of the video.
 
 ## The comment
 
+Build the body from three parts: the mermaid beat chain (paste the snippet from
+`render.py brief.json --mermaid --out comment.md`), the contact-sheet PNG as an
+image, and the pinned HTML link.
+
 ```bash
-gh pr comment 123 --body "Explainer (7 beats, 31s): <absolute-file-url>"
-gh pr view 123
+python3 <skill-dir>/scripts/render.py brief.json --mermaid --out /tmp/comment.md
+{ cat /tmp/comment.md; echo; echo "![beats](https://raw.githubusercontent.com/owner/name/<sha>/docs/explainers/pr-123-contact-sheet.png)"; echo "[Animated explainer](https://raw.githubusercontent.com/owner/name/<sha>/docs/explainers/pr-123-....html)"; } | gh pr comment 123 --body-file -
 ```
 
 Use the raw content URL, not a blob URL, when you want the animation to run
@@ -52,10 +77,10 @@ https://raw.githubusercontent.com/owner/name/<sha>/docs/explainers/pr-123-....ht
 ```
 
 The `<sha>` matters. A URL on a moving ref can change under the reader if you
-push a re-render. Pin to the commit SHA, then confirm the link with
-`web_extract` before you call it posted. A blob URL renders the file's source,
-which is fine for readers who want to audit the beats, so link both if the repo
-cares about that.
+push a re-render. Pin to the commit SHA, then confirm the link actually
+resolves before you call it posted. A blob URL renders the file's source, which
+is fine for readers who want to audit the beats, so link both if the repo cares
+about that.
 
 ## Optional: render to mp4
 
@@ -78,11 +103,20 @@ in a document and unusable as a video source.
 
 ## What to write in the PR comment
 
-One line naming the beats and the runtime, then the link, then anything the
-video cannot say: the things you want a human to actually read.
+One line naming the beats and the runtime, the mermaid beat chain, the poster
+image, the link, then anything the video cannot say: the things you want a human
+to actually read.
 
-> 7-beat explainer (31s): <url> — the beat that matters is `proof`: this diff
-> ships no test for the revoked-session path. Happy to add one.
+> 7-beat explainer (31s)
+>
+> ```mermaid
+> flowchart LR ...
+> ```
+>
+> ![beats](…/pr-123-contact-sheet.png)
+>
+> [Animated explainer](…/pr-123-....html) — the beat that matters is `proof`:
+> this diff ships no test for the revoked-session path. Happy to add one.
 
 Do not paste the full PR description into the comment. The description is in the
 diff; the video's job is the shape of the change, and the comment's job is the

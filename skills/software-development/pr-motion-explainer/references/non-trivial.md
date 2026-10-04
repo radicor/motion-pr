@@ -10,7 +10,7 @@ A change is **non-trivial** when any one of these is true:
 
 | Trigger | Threshold | Why |
 |---|---|---|
-| Changed lines | >= 40 added + deleted | Below that, the diff is readable in one sitting. A video is longer than the read. |
+| Changed lines | >= 40 added + deleted | Below that, the diff is readable in one sitting. A video is longer than the read. Counted over **meaningful files only**, so churn in a file the gate already discarded cannot trip it on its own. |
 | Meaningful files | >= 3 | One file is a patch. Three or more is a change in how a subsystem behaves. |
 | Sensitive path | any match | `auth`, `session`, `permission`, `billing`, `payment`, `migrations`, `schema`, `crypto`, `token`, `index`, `cache`, `queue`, `worker`, `middleware`, `router`, `entrypoint`, plus `*.sql`, `*.proto`, `*.graphql`, `*.tf`, IaC YAML. A 6-line change to an auth middleware outranks a 400-line refactor of leaf utilities. |
 | Dependency change | any | `package.json`, lockfiles, `requirements*.txt`, `go.mod`, `Cargo.toml`, `Gemfile`, `composer.json`. New transitive surface and new CVEs arrive through these. |
@@ -19,7 +19,14 @@ A change is **non-trivial** when any one of these is true:
 A change is **trivial** when none trigger, or when the diff is under 5 changed
 lines with no sensitive path and no dependency change. Version bumps, generated
 files, and doc edits land here even when the line count is large, because
-`files_ignored` holds them out of the meaningful set first.
+`files_ignored` holds them out of the meaningful set first — and because the
+line threshold is applied after that hold-out, not before.
+
+A **trivial** verdict names the thresholds it came up against, so the reader can
+see whether to argue with the gate or to tune it. A real run prints:
+
+    [TRIVIAL (skip the explainer)] PR None docs: expand install notes
+      - too small to animate: 4 changed lines < 40; 1 meaningful file(s) < 3
 
 ## The judgement call
 

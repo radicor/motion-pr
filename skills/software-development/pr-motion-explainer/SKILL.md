@@ -43,8 +43,8 @@ Don't use for:
 
 ## Prerequisites
 
-- `git` on PATH; `gh` authenticated (check with `terminal` and `gh auth status`)
-  only when the source is a GitHub PR number. A local `git range` needs no network.
+- `git` on PATH; `gh` authenticated (check with `gh auth status`) only when the
+  source is a GitHub PR number. A local `git range` needs no network.
 - Python 3.9+ from the session interpreter.
 
 ## How to Run
@@ -75,8 +75,11 @@ yet; the beat content is identical, only the byline differs.
 | `pr_brief.py ... --json-only` | suppress the human summary on stderr |
 | `render.py brief.json --out f.html` | animated timeline HTML |
 | `render.py brief.json --out f.html --static` | stacked scenes for print / a static image |
+| `render.py brief.json --mermaid --out m.md` | markdown mermaid beat chain, renders inline in the PR comment |
+| `poster.py brief.json --out p.png` | contact-sheet PNG for the PR comment, pure stdlib |
 
 Exit codes: `0` non-trivial, `3` trivial or empty diff, `1` fetch or usage error.
+
 
 ## Procedure
 
@@ -85,8 +88,10 @@ Exit codes: `0` non-trivial, `3` trivial or empty diff, `1` fetch or usage error
    `brief.json` exists.
 2. **Respect the verdict.** If it says `TRIVIAL` and the user has not asked for a
    video anyway, stop and say why in one sentence, quoting the reason from
-   `verdict.reasons`. Do not render. Completion criterion: the user knows the
-   gate fired and which threshold fired it.
+   `verdict.reasons`. On a trivial verdict that reason names the thresholds the
+   diff came up against, so pass the numbers along rather than saying "too
+   small". Do not render. Completion criterion: the user knows the gate fired
+   and which threshold it missed.
 3. **Read the beats before rendering.** `brief.json` holds ordered `beats`
    (`problem`, `before`, `change`, `after`, `proof`, `cost`, `recap`). Fix any
    beat that is wrong or vague by editing the brief JSON with `patch`; the beats
@@ -96,16 +101,24 @@ Exit codes: `0` non-trivial, `3` trivial or empty diff, `1` fetch or usage error
 4. **Render.** `render.py brief.json --out <path>`. Completion criterion: the
    script prints `N beats, Ms timeline` and the file exists at a plausible size
    (over 3KB for a 7-beat brief).
-5. **Verify in a browser.** Open the file with `browser_exec`, then seek the
-   timeline per beat with
+5. **Verify in a browser.** Open the file in whatever browser automation your
+   session has, then seek the timeline per beat with
    `document.getAnimations().forEach(a => { a.pause(); a.currentTime = ms })`
    at each beat's midpoint. Confirm per beat: exactly one visible card,
    `scrollHeight - clientHeight == 0`, and no intersection between the card's
    bounding box and the `.meta` strip. Completion criterion: every beat checked,
    zero overflow, zero overlap.
-6. **Publish.** Follow `references/publishing.md`: commit the HTML to the branch,
-   push, and post the link in the PR comment. Completion criterion: the PR
-   comment carries a link that resolves from the branch you pushed.
+
+   If you have no browser, say so plainly and check what you can statically:
+   `poster.py` reads the same beats, so running it will catch a malformed brief
+   before it reaches the PR. Report the unverified viewport check rather than
+   implying you looked.
+6. **Publish.** Follow `references/publishing.md`: commit the HTML and the
+   contact-sheet PNG to the branch, then post a PR comment that leads with the
+   mermaid beat chain (`render.py --mermaid`) and the PNG, with the raw HTML
+   link after. GitHub renders mermaid and images inline; it will not render the
+   HTML file itself. Completion criterion: the PR comment shows the diagram and
+   the poster, and the links resolve from the branch you pushed.
 
 ## Beats
 
@@ -143,10 +156,14 @@ Exit codes: `0` non-trivial, `3` trivial or empty diff, `1` fetch or usage error
 
 ## Verification
 
-- Gate: run `pr_brief.py` on a docs-only commit and on a one-line typo; both must
-  exit `3`.
+- Gate: run `pr_brief.py` on a docs-only commit, on a one-line typo, and on a
+  large lockfile-only bump; all three must exit `3`, and the reason must name
+  the threshold the diff missed.
 - Render: `render.py` exits `0`, prints the beat count, and the output contains
   one `<section class="scene">` per beat.
+- Poster: `poster.py` exits `0` and writes a PNG whose header is
+  `\x89PNG\r\n\x1a\n`. Open it once and look: text must sit inside its card, and
+  a beat with no glyphs available must not turn into a row of empty boxes.
 - Browser: at each beat's midpoint exactly one card is visible, `scrollHeight`
   equals `clientHeight`, and the card does not intersect `.meta`.
 - Publish: the link in the PR comment loads the file you pushed, not a local
