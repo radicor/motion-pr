@@ -98,8 +98,11 @@ def classify_files(paths: list[str]) -> tuple[list[str], list[str], list[str]]:
         if VENDOR.search(p) or LOCKFILE.search(p):
             ignorable.append(p)
             continue
-        # order matters: a manifest is meaningful even though it ends in .md
-        if DOC_ONLY.search(p) and not MANIFEST.search(p):
+        # order matters: a manifest is meaningful even though it ends in .md,
+        # and a requirements file is meaningful even though it ends in .txt.
+        # Without the carve-out, DOC_ONLY swallows requirements*.txt and a
+        # Python project's dependency change never trips the dependency gate.
+        if DOC_ONLY.search(p) and not MANIFEST.search(p) and not DEPENDENCY_FILE.search(p):
             ignorable.append(p)
             continue
         if CONFIG_NOISE.search(p):
@@ -211,7 +214,8 @@ def build_beats(pr: dict, diff_text: str, files: list[str], signals: list[str],
         {
             "name": "before",
             "headline": f"Before: {file_count_phrase(len(meaningful))}",
-            "detail": f"{added} added / {deleted} removed across {len(meaningful)} meaningful files.",
+            "detail": f"{added} added / {deleted} removed across {len(meaningful)} meaningful "
+                      f"{'file' if len(meaningful) == 1 else 'files'}.",
             "code_refs": [{"path": lead, "hunks": [h for h in hunks(diff_text) if h["path"] == lead][:2]}]
             if lead else [],
         },
@@ -227,7 +231,7 @@ def build_beats(pr: dict, diff_text: str, files: list[str], signals: list[str],
             "name": "after",
             "headline": f"After: {file_count_phrase(len(meaningful))} touched",
             "detail": f"Reviewer focus: {', '.join(signals[:3])}" if signals
-            else f"Reviewer focus: {describe_shape(meaningful)}",
+            else reviewer_focus(meaningful),
             "code_refs": [{"path": p} for p in rank_for_lead(meaningful)[:3]],
         },
     ]
@@ -264,8 +268,13 @@ def describe_change(signals: list[str], changed_lines: int,
                     files: list[str]) -> str:
     if signals:
         return f"Change: {signals[0]}"
+    if not files:
+        return "Change: no reviewable files"
+    # The headline says what kind of change it is; describe_shape already names
+    # the files in the beat's detail, so repeating the list here makes the
+    # headline and the detail read the same line twice.
     if changed_lines >= 200:
-        return f"Change: {describe_shape(files)}"
+        return f"Change: spread across {len(files)} files"
     return "Change: focused edit"
 
 
@@ -303,6 +312,18 @@ def describe_shape(files: list[str]) -> str:
     others = [p.rsplit("/", 1)[-1] for p in ranked[1:4]]
     tail = ", ".join(others[:-1]) + (" and " + others[-1] if len(others) > 1 else "")
     return f"{lead} leads, with {tail}"
+
+
+def reviewer_focus(files: list[str]) -> str:
+    """Where a reviewer should start, as distinct from what the change touched.
+
+    The `change` beat already names the file set; repeating it here gives the
+    reviewer the same sentence twice in a 30-second video. The ranking that
+    picks the lead file is also the reading order, so point at it instead.
+    """
+    if not files:
+        return "Reviewer focus: nothing meaningful to review"
+    return f"Reviewer focus: read {rank_for_lead(files)[0].rsplit('/', 1)[-1]} first"
 
 
 def first_problem_sentence(body: str) -> str:
@@ -343,16 +364,20 @@ def judge(pr: dict, diff_text: str, files: list[str]) -> dict:
     deleted = sum(counts.get(p, (0, 0))[1] for p in meaningful)
     changed = added + deleted
 
-    reasons: list[str] = []
+    # `triggers` are thresholds the diff actually met; `missed` are the ones it
+    # came up against. The two must stay separate: "no meaningful files" is a
+    # statement about the diff, not a trigger, so folding it into the trigger
+    # list made a docs-only diff report a reason while still judging it trivial
+    # -- and the file-count trigger, which fires with no line minimum, was being
+    # silently cancelled by a separate line floor.
+    triggers: list[str] = []
     missed: list[str] = []
-    if not meaningful:
-        reasons.append("no meaningful files (docs/lockfile/vendor only)")
     if changed >= MIN_CHANGED_LINES:
-        reasons.append(f"{changed} changed lines >= {MIN_CHANGED_LINES}")
+        triggers.append(f"{changed} changed lines >= {MIN_CHANGED_LINES}")
     else:
         missed.append(f"{changed} changed lines < {MIN_CHANGED_LINES}")
     if len(meaningful) >= MIN_FILES:
-        reasons.append(f"{len(meaningful)} files >= {MIN_FILES}")
+        triggers.append(f"{len(meaningful)} files >= {MIN_FILES}")
     else:
         missed.append(f"{len(meaningful)} meaningful file(s) < {MIN_FILES}")
 
@@ -360,24 +385,25 @@ def judge(pr: dict, diff_text: str, files: list[str]) -> dict:
     deps = [f for f in meaningful if DEPENDENCY_FILE.search(f)]
     enough_mass = changed >= MIN_LINES_FOR_SENSITIVE
     if sensitive and enough_mass:
-        reasons.append("touches a sensitive path: " + ", ".join(sensitive[:2]))
+        triggers.append("touches a sensitive path: " + ", ".join(sensitive[:2]))
     elif sensitive:
         missed.append(f"sensitive path {sensitive[0]} but only {changed} changed lines "
                       f"< {MIN_LINES_FOR_SENSITIVE}")
     if deps and enough_mass:
-        reasons.append("dependency change: " + ", ".join(
+        triggers.append("dependency change: " + ", ".join(
             DEPENDENCY_FILE.sub("", d).split("/")[0] or d for d in deps[:2]))
     elif deps:
         missed.append(f"dependency change {deps[0]} but only {changed} changed lines "
                       f"< {MIN_LINES_FOR_SENSITIVE}")
 
-    trivial = not reasons or (changed < 5 and not (sensitive and enough_mass)
-                              and not (deps and enough_mass))
+    trivial = not triggers
 
     # A trivial verdict has to say which threshold it came up against, otherwise
     # "too small to animate" gives the reader nothing to argue with or tune.
-    if reasons:
-        stated = reasons
+    if triggers:
+        stated = triggers
+    elif not meaningful:
+        stated = ["no meaningful files (docs/lockfile/vendor only)"]
     elif missed:
         stated = ["too small to animate: " + "; ".join(missed)]
     else:

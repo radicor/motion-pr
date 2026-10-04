@@ -1,0 +1,136 @@
+{
+  "source": {
+    "pr": 1,
+    "url": "https://github.com/radicor/motion-pr/pull/1",
+    "title": "feat: add pr-motion-explainer skill",
+    "author": "radicor",
+    "base": "main",
+    "head": "skill/pr-motion-explainer",
+    "range": null
+  },
+  "verdict": {
+    "non_trivial": true,
+    "added": 865,
+    "deleted": 0,
+    "changed_lines": 865,
+    "files_total": 7,
+    "files_meaningful": [
+      "skills/software-development/pr-motion-explainer/SKILL.md",
+      "skills/software-development/pr-motion-explainer/scripts/pr_brief.py",
+      "skills/software-development/pr-motion-explainer/scripts/render.py"
+    ],
+    "files_ignored": [
+      ".gitignore",
+      "docs/explainers/pr-1-pr-motion-explainer.html",
+      "skills/software-development/pr-motion-explainer/references/non-trivial.md",
+      "skills/software-development/pr-motion-explainer/references/publishing.md"
+    ],
+    "signals": [],
+    "sensitive_paths": [],
+    "reasons": [
+      "865 changed lines >= 40",
+      "3 files >= 3"
+    ],
+    "thresholds_missed": []
+  },
+  "beats": [
+    {
+      "name": "problem",
+      "headline": "feat: add pr-motion-explainer skill",
+      "detail": "`skills/software-development/pr-motion-explainer/` \u2014 a Hermes skill that turns a non-trivial pull request into an animated HTML explainer.",
+      "code_refs": []
+    },
+    {
+      "name": "before",
+      "headline": "Before: 3 files",
+      "detail": "865 added / 0 removed across 3 meaningful files.",
+      "code_refs": [
+        {
+          "path": "skills/software-development/pr-motion-explainer/scripts/pr_brief.py",
+          "hunks": [
+            {
+              "path": "skills/software-development/pr-motion-explainer/scripts/pr_brief.py",
+              "start": 1,
+              "lines": 456,
+              "header": "@@ -0,0 +1,456 @@"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "change",
+      "headline": "Change: spread across 3 files",
+      "detail": "pr_brief.py leads, with render.py and SKILL.md",
+      "code_refs": [
+        {
+          "path": "skills/software-development/pr-motion-explainer/scripts/pr_brief.py",
+          "added": [
+            "#!/usr/bin/env python3",
+            "\"\"\"Build a motion-explainer storyboard brief from a pull request or a git range.",
+            "Two jobs, one JSON shape:"
+          ]
+        },
+        {
+          "path": "skills/software-development/pr-motion-explainer/scripts/render.py",
+          "added": [
+            "#!/usr/bin/env python3",
+            "\"\"\"Render a storyboard brief into a self-contained animated HTML explainer.",
+            "Pure stdlib: brief JSON in, one HTML file out. No CDN, no build step, no"
+          ]
+        },
+        {
+          "path": "skills/software-development/pr-motion-explainer/SKILL.md",
+          "added": [
+            "---",
+            "name: pr-motion-explainer",
+            "description: \"Turn a non-trivial PR into an animated HTML explainer.\""
+          ]
+        }
+      ]
+    },
+    {
+      "name": "after",
+      "headline": "After: 3 files touched",
+      "detail": "Reviewer focus: read pr_brief.py first",
+      "code_refs": [
+        {
+          "path": "skills/software-development/pr-motion-explainer/scripts/pr_brief.py"
+        },
+        {
+          "path": "skills/software-development/pr-motion-explainer/scripts/render.py"
+        },
+        {
+          "path": "skills/software-development/pr-motion-explainer/SKILL.md"
+        }
+      ]
+    },
+    {
+      "name": "proof",
+      "headline": "Evidence: no tests in the diff",
+      "detail": "Confirm the change manually before merge.",
+      "code_refs": []
+    },
+    {
+      "name": "cost",
+      "headline": "Risk: contained to the changed modules",
+      "detail": "Single revert restores the previous behavior.",
+      "code_refs": []
+    },
+    {
+      "name": "recap",
+      "headline": "feat: add pr-motion-explainer skill",
+      "detail": "865 lines, 3 files, #1",
+      "code_refs": []
+    }
+  ],
+  "beat_order": [
+    "problem",
+    "before",
+    "change",
+    "after",
+    "proof",
+    "cost",
+    "recap"
+  ]
+}
