@@ -83,6 +83,7 @@ skills/software-development/pr-motion-explainer/
     poster.py                 brief JSON -> contact-sheet PNG, no browser needed
     render.py                 brief JSON -> animated HTML
 docs/explainers/
+  pr-1-brief.json                       the brief the demo was rendered from
   pr-1-pr-motion-explainer.html         animated, 31s
   pr-1-pr-motion-explainer.static.html  all beats stacked, for print
   pr-1-contact-sheet.png                7-frame overview poster
@@ -123,19 +124,49 @@ Running the skill against a with-skill/baseline harness found six more, all now 
   `pr_brief.py ... && render.py ...` chain the usage docs recommend aborted
   before rendering. A forced run now exits `0`.
 
+A second pass over the merged branch found four more, all now fixed:
+
+- On a diff that trips no path signal, `change` and `after` printed the same
+  `describe_shape()` clause — headline, detail, and the reviewer-focus line all
+  read "pr_brief.py leads, with render.py and SKILL.md". This was visible in PR
+  #1's own demo. `change` now names the character of the change in its headline
+  and leaves the file list to its detail; `after` points at the file to read
+  first instead of repeating the list.
+- The `before` detail read "1 meaningful files." The plural is now derived.
+- The installed copy at `~/.hermes/skills/` was a pre-fix build: no `poster.py`,
+  the old `judge()` that animated a 900-line lockfile bump, and a `--force` that
+  still exited `3`. It is now byte-identical to the source of record here.
+- The demo regeneration commands consumed a scratch `brief.json` that is
+  gitignored, so a fresh checkout could not reproduce the committed HTML. The
+  brief is now committed at `docs/explainers/pr-1-brief.json` and the commands
+  verified to reproduce both artifacts byte-for-byte.
+- `requirements*.txt` was swallowed by the `DOC_ONLY` `.txt` rule before the
+  dependency gate could see it, so of every dependency file the gate documents
+  as a trigger, the one a Python project actually uses never fired. Dependency
+  files are now carved out of `DOC_ONLY`, the same way skill manifests already
+  are. Lockfiles remain ignored.
+- The file-count trigger was silently overridden by a line floor inside `judge()`.
+  A diff touching 3 meaningful files with only 4 changed lines reported
+  `3 files >= 3` as a *reason* while still judging the diff `TRIVIAL` and writing
+  no beats — the verdict contradicted its own stated reason, and the trigger
+  fires with no line minimum. Triggers and misses are now separate lists, and
+  the "no meaningful files" statement is no longer counted as a trigger.
+
 Not verified: the mp4 rendering path in `references/publishing.md`. `ffmpeg` is not installed in this environment, so that route is documented but untested.
 
 ## Demo assets
 
-`docs/explainers/pr-1-contact-sheet.png` is produced by `poster.py` from `brief.json`. `frames/` holds one PNG per beat, captured at each beat's midpoint by pausing the CSS animations and seeking `currentTime` in a real browser.
+`docs/explainers/pr-1-contact-sheet.png` is produced by `poster.py` from `docs/explainers/pr-1-brief.json`. `frames/` holds one PNG per beat, captured at each beat's midpoint by pausing the CSS animations and seeking `currentTime` in a real browser.
 
 ```bash
 # the poster: stdlib only, reproducible anywhere
-python3 skills/software-development/pr-motion-explainer/scripts/poster.py brief.json --out docs/explainers/pr-1-contact-sheet.png
+python3 skills/software-development/pr-motion-explainer/scripts/poster.py docs/explainers/pr-1-brief.json --out docs/explainers/pr-1-contact-sheet.png
 
 # the animated page and its stacked-for-print variant
-python3 skills/software-development/pr-motion-explainer/scripts/render.py brief.json --out docs/explainers/pr-1-pr-motion-explainer.html
-python3 skills/software-development/pr-motion-explainer/scripts/render.py brief.json --out docs/explainers/pr-1-pr-motion-explainer.static.html --static
+python3 skills/software-development/pr-motion-explainer/scripts/render.py docs/explainers/pr-1-brief.json --out docs/explainers/pr-1-pr-motion-explainer.html
+python3 skills/software-development/pr-motion-explainer/scripts/render.py docs/explainers/pr-1-brief.json --out docs/explainers/pr-1-pr-motion-explainer.static.html --static
 ```
+
+`docs/explainers/pr-1-brief.json` is the brief those commands consume, committed so a fresh checkout reproduces the demo byte-for-byte. The scratch `brief.json` the usage section generates is gitignored and is not that file.
 
 `frames/` needs a browser, so those commands do not regenerate it; the poster is the artifact that is. The static build stacks every beat into one scrolling page, which is what you want in a document and unusable as a video source.
