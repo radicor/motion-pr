@@ -9,7 +9,16 @@ preview cache (see references/publishing.md for what does and does not work).
 Usage
 -----
     render.py brief.json --out pr-123-explainer.html
-    render.py brief.json --out out.html --fps 30 --static     # no JS driver
+    render.py brief.json --out out.html --static     # stacked for print, no timeline
+    render.py brief.json --mermaid --out comment.md   # beat chain for a PR comment
+    render.py brief.json --github --out docs/explainers/ --sha <sha>
+
+`--github` writes the HTML, the contact-sheet PNG, and a ready-to-post comment
+whose raw URLs are pinned to `--sha`. The same sha is compared against the
+brief's `source.head_sha`, so a brief whose diff has moved on is refused rather
+than published. `--sha` on any other mode performs only that check.
+
+Exit codes: 0 rendered, 3 no beats, 2 brief is not schema v2, 1 stale brief.
 """
 
 from __future__ import annotations
@@ -20,6 +29,9 @@ import json
 import re
 import sys
 from pathlib import Path
+
+from brief_schema import SCHEMA_VERSION, validate_brief
+from poster import sheet as poster_sheet
 
 # seconds per beat; also the CSS custom property the timeline is built from
 SCENE_SECONDS = 4.0
@@ -43,6 +55,39 @@ PALETTE = {
 
 def esc(s: str) -> str:
     return html.escape(s or "", quote=True)
+
+
+def slugify(title: str) -> str:
+    """PR title -> the `pr-N-<this>` filename half."""
+    s = re.sub(r"[^a-z0-9]+", "-", (title or "").lower()).strip("-")
+    return s[:48] or "change"
+
+
+def owner_repo_from_url(url: str | None) -> tuple[str, str]:
+    """github.com/owner/name/... -> (owner, name); empty when the brief has no URL."""
+    m = re.match(r"https?://github\.com/([^/]+)/([^/]+)", url or "", re.I)
+    return (m.group(1), m.group(2)) if m else ("", "")
+
+
+def check_freshness(brief: dict, sha: str | None) -> str:
+    """Does `--sha` match the sha this brief was gated from? Empty means fine.
+
+    A stale explainer is worse than none: it states things about a diff that has
+    moved. The renderers never run git, so the caller supplies the current sha
+    and the comparison stays on this side of the architecture. Only checked when
+    a sha is given -- re-rendering a committed brief for print has no reason to
+    be fresh.
+    """
+    if not sha:
+        return ""
+    have = (brief.get("source") or {}).get("head_sha")
+    if not have:
+        return (f"no head_sha in the brief to compare against --sha {sha[:12]}; "
+                "regenerate it with pr_brief.py")
+    if have != sha:
+        return (f"brief was gated from {have[:12]} but --sha is {sha[:12]}; "
+                "the diff has moved on, re-run pr_brief.py")
+    return ""
 
 
 def clip(s: str, limit: int = 190) -> str:
@@ -257,21 +302,92 @@ def build_html(brief: dict) -> str:
 """
 
 
+def publish_bundle(data: dict, out_dir: Path, sha: str | None) -> int:
+    """Write the whole publish bundle: HTML, contact-sheet PNG, and a comment.
+
+    Publishing used to be four commands and a copy-paste, which is where the
+    contact sheet and the pinned sha got forgotten. One command emits
+    everything `references/publishing.md` asks for.
+
+    The raw URLs need a sha, and the same sha proves the brief is current, so
+    passing `--sha` is what makes the bundle trustworthy. Without it the
+    comment carries placeholders and no freshness check ran.
+    """
+    src = data["source"]
+    beats = data["beats"]
+    ident = str(src["pr"]) if src.get("pr") else (sha or "")[:8] or "local"
+    prefix = f"pr-{ident}"
+    slug = slugify(src.get("title"))
+    owner, repo = owner_repo_from_url(src.get("url"))
+    # placeholders, not guesses: a wrong owner/name silently links someone else's repo
+    where = f"{owner}/{repo}" if owner else "<owner>/<repo>"
+    pin = sha or "<sha>"
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    html_path = out_dir / f"{prefix}-{slug}.html"
+    png_path = out_dir / f"{prefix}-contact-sheet.png"
+    comment_path = out_dir / f"{prefix}-comment.md"
+
+    html_path.write_text(build_html(data))
+    png_path.write_bytes(poster_sheet(data))
+
+    base = f"https://raw.githubusercontent.com/{where}/{pin}"
+    body = build_mermaid(data)
+    body += (
+        f"\n![beats]({base}/{png_path.name})\n\n"
+        f"[Animated explainer]({base}/{html_path.name})\n"
+        f"\n<!-- add the one thing the video raised; see references/publishing.md -->\n"
+    )
+    comment_path.write_text(body)
+
+    if not sha:
+        sys.stderr.write("warning: no --sha, so the comment's raw URLs still hold "
+                         "<sha> placeholders and were not freshness-checked\n")
+    if not owner:
+        sys.stderr.write("warning: the brief has no PR url, so the comment's raw "
+                         "URLs still hold <owner>/<repo> placeholders\n")
+    print(f"{out_dir}/: publish bundle for {prefix}-{slug}, {len(beats)} beats, "
+          f"{TITLE_SECONDS + SCENE_SECONDS * len(beats):.0f}s", file=sys.stderr)
+    for p in (html_path, png_path, comment_path):
+        print(f"  {p.name}", file=sys.stderr)
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("brief", help="brief JSON from pr_brief.py")
-    ap.add_argument("--out", required=True, help="output HTML path")
+    ap.add_argument("--out", help="output HTML path; with --github, the output directory (default docs/explainers)")
     ap.add_argument("--static", action="store_true",
                     help="stack the scenes for print/GitHub-image use, no timeline")
     ap.add_argument("--mermaid", action="store_true",
                     help="emit a markdown mermaid snippet (renders in the PR comment) instead of HTML")
+    ap.add_argument("--github", action="store_true",
+                    help="emit the whole publish bundle into --out: HTML, contact-sheet PNG, and a ready-to-post comment")
+    ap.add_argument("--sha", help="commit SHA to pin raw URLs with, and to check against the brief's source.head_sha")
     args = ap.parse_args()
 
     data = json.loads(Path(args.brief).read_text())
+
+    problems = validate_brief(data)
+    if problems:
+        sys.stderr.write(f"{args.brief}: not a v{SCHEMA_VERSION} brief\n")
+        for p in problems:
+            sys.stderr.write(f"  - {p}\n")
+        return 2
+
+    stale = check_freshness(data, args.sha)
+    if stale:
+        sys.stderr.write(f"{args.brief}: {stale}\n")
+        return 1
+
     if not data.get("beats"):
         sys.stderr.write("brief has no beats (trivial PR? re-run with --force)\n")
         return 3
+
+    if args.github:
+        return publish_bundle(data, Path(args.out or "docs/explainers"), args.sha)
+
     if args.mermaid:
         out = Path(args.out)
         out.parent.mkdir(parents=True, exist_ok=True)

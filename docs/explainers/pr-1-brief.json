@@ -1,4 +1,5 @@
 {
+  "schema": 2,
   "source": {
     "pr": 1,
     "url": "https://github.com/radicor/motion-pr/pull/1",
@@ -6,6 +7,7 @@
     "author": "radicor",
     "base": "main",
     "head": "skill/pr-motion-explainer",
+    "head_sha": "5cba546dd6ddc2c01be8404ee3767c4910e48ec6",
     "range": null
   },
   "verdict": {
@@ -31,7 +33,11 @@
       "865 changed lines >= 40",
       "3 files >= 3"
     ],
-    "thresholds_missed": []
+    "thresholds_missed": [],
+    "triggers": [
+      "865 changed lines >= 40",
+      "3 files >= 3"
+    ]
   },
   "beats": [
     {
