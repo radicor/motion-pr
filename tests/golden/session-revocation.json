@@ -1,0 +1,141 @@
+{
+  "schema": 2,
+  "source": {
+    "pr": 42,
+    "url": "https://github.com/demo/payments/pull/42",
+    "title": "Revoke sessions server-side",
+    "author": "ada",
+    "base": null,
+    "head": null,
+    "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "range": null
+  },
+  "verdict": {
+    "non_trivial": true,
+    "added": 5,
+    "deleted": 1,
+    "changed_lines": 6,
+    "files_total": 3,
+    "files_meaningful": [
+      "src/auth/session.py",
+      "db/migrations/004_sessions.sql",
+      "requirements.txt"
+    ],
+    "files_ignored": [],
+    "signals": [
+      "auth or permissions",
+      "schema or migration"
+    ],
+    "sensitive_paths": [
+      "src/auth/session.py",
+      "db/migrations/004_sessions.sql"
+    ],
+    "triggers": [
+      "3 files >= 3"
+    ],
+    "reasons": [
+      "3 files >= 3"
+    ],
+    "thresholds_missed": [
+      "6 changed lines < 40",
+      "sensitive path src/auth/session.py but only 6 changed lines < 8",
+      "dependency change requirements.txt but only 6 changed lines < 8"
+    ]
+  },
+  "beats": [
+    {
+      "name": "problem",
+      "headline": "Revoke sessions server-side",
+      "detail": "Sessions could not be ended without a password change, so a stolen token stayed valid until it expired.",
+      "code_refs": []
+    },
+    {
+      "name": "before",
+      "headline": "Before: 3 files",
+      "detail": "5 added / 1 removed across 3 meaningful files.",
+      "code_refs": [
+        {
+          "path": "db/migrations/004_sessions.sql",
+          "hunks": [
+            {
+              "path": "db/migrations/004_sessions.sql",
+              "start": 1,
+              "lines": 1,
+              "header": "@@ -1,1 +1,1 @@"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "change",
+      "headline": "Change: auth or permissions",
+      "detail": "auth or permissions; schema or migration",
+      "code_refs": [
+        {
+          "path": "db/migrations/004_sessions.sql",
+          "added": [
+            "ALTER TABLE sessions ADD COLUMN revoked_at TIMESTAMP;"
+          ]
+        },
+        {
+          "path": "src/auth/session.py",
+          "added": [
+            "def revoke(user, token):",
+            "store.delete(token)",
+            "audit.log(user, 'revoke')"
+          ]
+        },
+        {
+          "path": "requirements.txt",
+          "added": [
+            "redis>=4.0"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "after",
+      "headline": "After: 3 files touched",
+      "detail": "Reviewer focus: auth or permissions, schema or migration",
+      "code_refs": [
+        {
+          "path": "db/migrations/004_sessions.sql"
+        },
+        {
+          "path": "src/auth/session.py"
+        },
+        {
+          "path": "requirements.txt"
+        }
+      ]
+    },
+    {
+      "name": "proof",
+      "headline": "Evidence: no tests in the diff",
+      "detail": "Confirm the change manually before merge.",
+      "code_refs": []
+    },
+    {
+      "name": "cost",
+      "headline": "Risk: auth or permissions, schema or migration",
+      "detail": "Labelled breaking: confirm a migration path and release note.",
+      "code_refs": []
+    },
+    {
+      "name": "recap",
+      "headline": "Revoke sessions server-side",
+      "detail": "6 lines, 3 files, #42",
+      "code_refs": []
+    }
+  ],
+  "beat_order": [
+    "problem",
+    "before",
+    "change",
+    "after",
+    "proof",
+    "cost",
+    "recap"
+  ]
+}

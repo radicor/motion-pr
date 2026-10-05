@@ -26,6 +26,8 @@ import sys
 import zlib
 from pathlib import Path
 
+from brief_schema import SCHEMA_VERSION, validate_brief
+
 # Poster geometry, in pixels. Sized for legibility in a GitHub comment column
 # (roughly 640px wide there) rather than for a browser viewport.
 COLS = 2
@@ -271,6 +273,14 @@ def main() -> int:
     args = ap.parse_args()
 
     data = json.loads(Path(args.brief).read_text())
+
+    problems = validate_brief(data)
+    if problems:
+        sys.stderr.write(f"{args.brief}: not a v{SCHEMA_VERSION} brief\n")
+        for p in problems:
+            sys.stderr.write(f"  - {p}\n")
+        return 2
+
     if not data.get("beats"):
         sys.stderr.write("brief has no beats (trivial PR? re-run with --force)\n")
         return 3

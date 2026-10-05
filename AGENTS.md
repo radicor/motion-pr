@@ -14,31 +14,52 @@ directly. When you need new information on screen, add it to the brief in
 
 ```
 gh/git -> pr_brief.py --pr N | --range A...B  ->  brief.json
+                        |                            |
+              brief_schema.py (the contract)        |
                                                       |
                           +-----------------------+---+--------------------+
                           |                                            |
-              render.py  (animated HTML, --static, --mermaid)      poster.py (contact-sheet PNG)
+              render.py  (animated HTML, --static, --mermaid, --github)  poster.py (contact-sheet PNG)
 ```
+
+`brief_schema.py` is imported by all three scripts. It owns `SCHEMA_VERSION` and
+`validate_brief()`, which is what turns a hand-edited brief's `KeyError` into
+"re-run pr_brief.py". A brief without `schema: 2` is refused by both renderers.
 
 ## Commands
 
-There is no build, no test runner, no linter config, and no CI. Everything runs
-straight from the source files with `python3`. Verification is manual and is
-described in `SKILL.md` under *Verification*; honour it rather than skipping it.
+There is no build, no linter config, and no packaging. Everything runs straight
+from the source files with `python3`. What does exist is a test suite, because
+the gate kept being rewritten and nothing was holding the rewrites honest:
+
+```bash
+python3 -m unittest discover -s tests -t . -v   # the whole suite, stdlib only
+```
+
+Verification beyond that is manual and is described in `SKILL.md` under
+*Verification*; honour it rather than skipping it.
 
 ```bash
 S=skills/software-development/pr-motion-explainer/scripts
 
 # gate + storyboard (exit 3 = "skip, this diff is trivial" and is a valid answer)
 python3 $S/pr_brief.py --pr 123 --out brief.json
-python3 $S/pr_brief.py --range origin/main...HEAD --out brief.json   # no network
-python3 $S/pr_brief.py --pr 123 --json-only                          # stderr silent
+python3 $S/pr_brief.py --pr auto --out brief.json                  # current branch's PR
+python3 $S/pr_brief.py --range origin/main...HEAD --out brief.json # no network
+python3 $S/pr_brief.py --range origin/main...HEAD --offline        # promises it
+python3 $S/pr_brief.py --pr 123 --json-only                        # stderr silent
 
 python3 $S/render.py brief.json --out out.html                       # animated
 python3 $S/render.py brief.json --out out.html --static              # stacked, for print
 python3 $S/render.py brief.json --mermaid --out comment.md           # PR-comment diagram
+python3 $S/render.py brief.json --github --out docs/explainers/ --sha $SHA  # whole bundle
 python3 $S/poster.py brief.json --out sheet.png                      # contact-sheet PNG
 ```
+
+`--github` imports `poster.sheet` rather than shelling out, so `render.py` gains
+one dependency on its sibling and stays inside the "renderers never touch git"
+rule: the sha comes from `--sha`, and `--sha` is the caller's word for what HEAD
+is now.
 
 Quick repro of the committed demo (byte-for-byte, verified with `cmp`):
 
@@ -53,11 +74,12 @@ faking output. `gh` is available and authenticated; `git` obviously.
 
 ## Exit codes are load-bearing
 
-`0` non-trivial, `3` trivial/empty (still writes a brief, with `beats: []`),
-`1` fetch or usage error. Both `render.py` and `poster.py` exit `3` when the
-brief has no beats. The `&&` chains the README recommends therefore depend on
-this: `--force` on a trivial diff emits beats **and** exits `0`, so the chain
-runs. If you change that, you break the documented usage.
+`pr_brief.py`: `0` non-trivial, `3` trivial/empty (still writes a brief, with
+`beats: []`), `1` fetch or usage error. Both renderers exit `3` when the brief
+has no beats and `2` when the brief is not schema v2. The `&&` chains the README
+recommends therefore depend on this: `--force` on a trivial diff emits beats
+**and** exits `0`, so the chain runs. If you change that, you break the
+documented usage.
 
 ## The gate is the product
 
@@ -68,12 +90,21 @@ feature. Rules that exist because they were bugs:
 - **Filter files before counting lines.** `judge()` sums added/deleted only over
   `meaningful` files. Counting the whole diff let a 900-line lockfile bump trip
   `MIN_CHANGED_LINES` on its own.
-- **`triggers` and `missed` are separate lists.** A trigger is a threshold the
-  diff met; folding a statement like "no meaningful files" into triggers made
-  the verdict contradict its own reason. Do not merge them.
+- **`triggers` and `missed` are separate lists, and both reach the brief.** A
+  trigger is a threshold the diff met; folding a statement like "no meaningful
+  files" into triggers made the verdict contradict its own reason. `verdict`
+  now carries `triggers` alongside `thresholds_missed`, and
+  `tests/test_gate.py` asserts `non_trivial == bool(triggers)` and
+  `reasons == triggers` on a pass — so collapsing them back together fails a
+  test instead of only a code review.
 - **No line floor on the file-count trigger.** `MIN_FILES` fires at 3 files
   regardless of line count; only `MIN_LINES_FOR_SENSITIVE` gates the
-  sensitive-path and dependency triggers.
+  sensitive-path and dependency triggers. A diff can therefore be non-trivial
+  with fewer than 40 changed lines, and `thresholds_missed` is legitimately
+  non-empty on a passing verdict.
+- **A signal is not a trigger.** `SIGNALS` chooses the words the beats use;
+  only the four triggers in `references/non-trivial.md` decide. A `*.ts`-only
+  diff with three changed lines is trivial.
 - **`classify_files()` check order is intentional**: vendor/lockfile, then
   `DOC_ONLY` *minus* `MANIFEST` *minus* `DEPENDENCY_FILE`, then `CONFIG_NOISE`.
   `*.md` and `*.txt` are documentation by default, so `SKILL.md`/`README.md`
@@ -84,7 +115,8 @@ feature. Rules that exist because they were bugs:
   must rank, not take `files[0]`.
 
 Tuning a threshold is expected behaviour, not a hack: change it in `judge()`,
-update `references/non-trivial.md`, and say in the PR thread which one moved.
+update `references/non-trivial.md` (the suite asserts the doc's numbers against
+the constants, so it will tell you), and say in the PR thread which one moved.
 
 ## Beat content rules
 
@@ -153,6 +185,34 @@ any shipped script.
   `SKILL.md` the procedure, `references/` the reasoning behind the gate and the
   publishing rules.
 
+## Subprocess bounds
+
+`run()` in `pr_brief.py` wraps every `git` and `gh` call, and three things about
+it are load-bearing rather than cosmetic:
+
+- **A timeout, not a hope.** `SUBPROCESS_TIMEOUT` bounds any single call and
+  returns `124` with the command named. Before this, an auth prompt or a network
+  stall hung the whole session with no output.
+- **Pagers and prompts are opted out** via `GIT_PAGER`/`GH_PAGER`/`GIT_TERMINAL_PROMPT`.
+  Both wait on a person, and nothing in an agent loop is going to type.
+- **`--offline` tightens the bound to `OFFLINE_TIMEOUT`** and refuses `--pr`
+  outright. `--range --offline` is the hermetic mode: it is what the tests and a
+  reproducible render rely on.
+
+If you add a fetcher, call `run()` — do not reach for `subprocess` directly, or
+the new call inherits none of the above.
+
+## Freshness
+
+A brief records the sha it was gated from in `source.head_sha` (`headRefOid` for
+a PR, the range tip for `--range`). `render.py --sha` compares the caller's sha
+against it and exits `1` with both shas named when they disagree.
+
+The check lives where it does because the renderers never touch git — that rule
+is what keeps them testable, and `--sha` is how it gets the information anyway.
+One input does two jobs: it pins the comment's raw URLs *and* proves the brief is
+current, which is why a stale brief cannot be published by accident.
+
 ## Repo-level gotchas
 
 - The skill is also installed at `~/.config/.hermes/skills/software-development/pr-motion-explainer/`,
@@ -175,3 +235,13 @@ any shipped script.
 - `.crush/` and `.cube/` are local session scratch (screenshots, browser
   profiles) and are ignored by global git config, not by this repo's
   `.gitignore`. Do not commit them.
+- `tests/` is stdlib `unittest` on purpose, not pytest. The skill's premise is
+  that it runs anywhere with a `python3`, and a suite that needs a `pip install`
+  would not prove that. CI runs it on 3.9, 3.11 and 3.13; if you add a case,
+  make sure it does not depend on a newer interpreter.
+- `tests/golden/session-revocation.json` is a committed expected output. When it
+  changes, read the diff and decide fix-or-regression before updating it; that
+  review is the entire reason the file exists.
+- `tests/test_docs.py` asserts the gate's prose against `SENSITIVE_PATH` and
+  `DEPENDENCY_FILE`. Adding a path to a regex means updating the word set in
+  that test and the prose, and the failure will tell you.
