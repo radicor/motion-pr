@@ -61,7 +61,7 @@ A PR gets an explainer only if it trips one of these:
 
 - 40 or more changed lines
 - 3 or more meaningful files
-- a sensitive path: `auth`, `session`, `permissions`, `migrations`, `schema`, `billing`, `payment`, `crypto`, `token`, `cache`, `index`, `query`, `queue`, `worker`, `middleware`, `router`, `entrypoint`, plus `*.sql`, `*.proto`, `*.graphql`, `*.tf`
+- a sensitive path: `auth`, `oauth`, `session`, `permissions`, `security`, `migrations`, `schema`, `billing`, `payment`, `crypto`, `token`, `cache`, `index`, `query`, `queue`, `worker`, `middleware`, `router`, `entrypoint`, `api`, `main`, plus `*.sql`, `*.proto`, `*.graphql`, `*.tf`, `*.yaml`, `*.yml`
 - a dependency change: `package.json`, lockfiles, `requirements*.txt`, `go.mod`, `Cargo.toml`, `Gemfile`, `composer.json`
 
 Docs, lockfiles, vendor directories, and dotfiles are held out of the file count before lines are counted, so a 900-line lockfile bump stays trivial. The sensitive-path trigger additionally requires 8 or more changed lines, because a one-line typo in `auth.py` is not a story.
@@ -73,6 +73,7 @@ The thresholds live in one function, `judge()` in `pr_brief.py`. When one misfir
 ## Repository layout
 
 ```
+AGENTS.md                              contributor guide: gate history, beat rules, gotchas
 skills/software-development/pr-motion-explainer/
   SKILL.md                    the skill itself
   references/
@@ -90,7 +91,14 @@ docs/explainers/
   frames/                                one PNG per beat
 ```
 
-The skill is also installed at `~/.hermes/skills/software-development/pr-motion-explainer/`, which is where Hermes loads it from. The copy here is the source of record. If the two drift, the installed one wins, so re-copy after editing.
+`AGENTS.md` is the guide for anyone changing the skill: which `judge()` rules exist because they were bugs, how beats must differ from each other, and the renderer gotchas. It documents the same conventions `SKILL.md` and the `references/` files do, from the contributor's side rather than the user's.
+
+The skill is also installed at `~/.config/.hermes/skills/software-development/pr-motion-explainer/`, which is where Hermes loads it from. The copy here is the source of record. If the two drift, the installed one wins, so re-copy after editing:
+
+```bash
+cp -r skills/software-development/pr-motion-explainer/* ~/.config/.hermes/skills/software-development/pr-motion-explainer/
+diff -rq skills/software-development/pr-motion-explainer/ ~/.config/.hermes/skills/software-development/pr-motion-explainer/
+```
 
 ## Verification status
 
@@ -133,7 +141,7 @@ A second pass over the merged branch found four more, all now fixed:
   and leaves the file list to its detail; `after` points at the file to read
   first instead of repeating the list.
 - The `before` detail read "1 meaningful files." The plural is now derived.
-- The installed copy at `~/.hermes/skills/` was a pre-fix build: no `poster.py`,
+- The installed copy at `~/.config/.hermes/skills/` was a pre-fix build: no `poster.py`,
   the old `judge()` that animated a 900-line lockfile bump, and a `--force` that
   still exited `3`. It is now byte-identical to the source of record here.
 - The demo regeneration commands consumed a scratch `brief.json` that is
