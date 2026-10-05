@@ -137,9 +137,14 @@ real PR description, not a placeholder to leave.
 
 ## Gotchas in `render.py`
 
-- The timeline is CSS keyframes on fixed `vh`/`vw` boxes with a 30vh bottom
-  inset reserved for the `.meta` strip. Raising `MAX_REFS_PER_SCENE` or
-  `MAX_LINES_PER_REF` risks clipping; if you do, re-run the viewport check.
+- The timeline is CSS keyframes on fixed `vh`/`vw` boxes. The page is a flex
+  column and `.meta` is in flow, so the stage takes whatever height the strip
+  leaves and the two cannot overlap. Do **not** revert `.meta` to
+  `position:fixed` and re-introduce a guessed bottom inset: the strip's height is
+  content-driven (one row per trigger), and a three-trigger strip outgrew every
+  fixed reserve and covered the last card. Raising `MAX_REFS_PER_SCENE` or
+  `MAX_LINES_PER_REF` risks clipping *within* the stage; if you do, re-run the
+  viewport check.
 - Viewport sensitivity: below 760px tall the CSS tightens type; below 560px it
   hides `.ref-line` 4 and beyond. Verify at the shortest viewport you support.
 - `--static` only injects `class="static"` into `<body>`; the CSS does the rest.

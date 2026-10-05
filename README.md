@@ -144,13 +144,14 @@ python3 -m unittest discover -s tests -t .
 | session revocation: 3 files, migration, dependency change | `NON-TRIVIAL`, exit 0, 7 beats |
 | PR #1 via `gh` | `NON-TRIVIAL`, 7 beats, 31s |
 | all 7 beats at a 577px viewport | one visible card, zero overflow, zero overlap |
-
+| a three-trigger verdict, the tallest meta strip, at 560px | zero overlap; the strip is in flow, so it cannot cover a card |
 The suite covers the gate (one case per threshold and per carve-out, including
 every one below), the beat text (a golden brief plus the no-repetition rules),
-the CLI (exit codes, the publish bundle, the freshness check), and the docs
-(the gate's documented vocabulary is asserted against the regexes that enforce
-it, so the prose cannot drift again). Browser viewport checks are still manual —
-they need a real browser, which CI does not have.
+the CLI (exit codes, the publish bundle, the freshness check), the layout (the
+meta strip must stay in flow), and the docs (the gate's documented vocabulary is
+asserted against the regexes that enforce it, so the prose cannot drift again).
+Browser viewport checks are still manual — they need a real browser, which CI
+does not have.
 
 Generating this PR's own explainer found four defects that testing against throwaway repos had not: `.gitignore` led every beat because git emits dotfiles first in a fresh diff; the change beat read "logic change spread across the diff" when no path signal matched; markdown from the PR body rendered as literal backticks; and `render.py` used `re` without importing it.
 
@@ -215,6 +216,15 @@ Writing the suite found three more, all now fixed:
   regex are now asserted against each other, so that drift fails a test instead
   of waiting for a reader to notice.
 
+Browser-checking PR #6's own explainer found one more, in `render.py` rather than
+the gate: the meta strip was `position:fixed` over the stage while each card
+reserved a guessed `26vh` for it. The strip grows one row per gate trigger, so a
+three-trigger verdict made it 141px tall and it covered the last card — by 2px
+at a 577px viewport, by 17px at 560px. The page is now a flex column with the
+strip in flow, so the stage takes whatever height is left and the two cannot
+overlap regardless of how many triggers fire. The suite asserts the strip stays
+out of `position:fixed` and that no card reserves more than a small constant.
+
 Not verified: the mp4 rendering path in `references/publishing.md`. `ffmpeg` is not installed in this environment, so that route is documented but untested.
 
 ## Demo assets
@@ -233,3 +243,5 @@ python3 skills/software-development/pr-motion-explainer/scripts/render.py docs/e
 `docs/explainers/pr-1-brief.json` is the brief those commands consume, committed so a fresh checkout reproduces the demo byte-for-byte. The scratch `brief.json` the usage section generates is gitignored and is not that file.
 
 `frames/` needs a browser, so those commands do not regenerate it; the poster is the artifact that is. The static build stacks every beat into one scrolling page, which is what you want in a document and unusable as a video source.
+
+`frames/` predates the layout fix above: it was captured from the page as it was when the meta strip was fixed-position, so the bottom inset shown there is the old guessed reserve. Recapturing needs a real browser and the pause-and-seek recipe in `SKILL.md`; no shipped script does it.

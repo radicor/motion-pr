@@ -9,6 +9,7 @@ instead. No test touches git, gh, or the network.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -203,6 +204,33 @@ class RenderCli(unittest.TestCase):
             self.assertNotIn("Traceback", result.stderr)
             self.assertIn("not a v2 brief", result.stderr)
             self.assertIn("source", result.stderr)
+
+
+    def test_the_meta_strip_is_in_flow_not_overlaying_the_cards(self) -> None:
+        """The cards used to reserve a fixed 30vh for a meta strip whose height
+        is content-driven. A three-trigger meta outgrew the reserve and covered
+        the last card by 2px at a 577px viewport. In flow, the stage takes
+        whatever the meta leaves, so overlap is structurally impossible."""
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "pr.html"
+            result = run_cli("render.py", str(GOLDEN), "--out", str(out))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            css = out.read_text()
+            self.assertNotIn("position:fixed", css.split(".meta")[1].split("}")[0],
+                             "the meta strip must not be fixed-position")
+            self.assertIn("display:flex; flex-direction:column", css,
+                          "the page must be a column so the stage sizes around the meta")
+            # every .scene rule: the bottom inset must be a small constant, not a
+            # large vh reserve for a strip whose height we do not control
+            for rule in re.findall(r"\.scene(?:\s+\.static)? \{([^}]*)\}", css):
+                inset = re.search(r"inset:([^;]+)", rule)
+                if not inset or inset.group(1).strip() == "auto":
+                    continue
+                bottom = inset.group(1).split()[-1]
+                self.assertTrue(bottom.endswith("vh"), rule)
+                self.assertLessEqual(float(bottom[:-2]), 4,
+                                     f"bottom inset {bottom} reserves space the "
+                                     "meta no longer needs")
 
 
 class StalenessCheck(unittest.TestCase):

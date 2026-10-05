@@ -37,8 +37,10 @@ from poster import sheet as poster_sheet
 SCENE_SECONDS = 4.0
 TITLE_SECONDS = 3.0
 
-# Fits a 1280x800 viewport: 6vw side margins, 30vh reserved for the meta strip.
-# Raise these only if you also re-check the fit (see SKILL.md Verification).
+# Fits a 1280x800 viewport: 6vw side margins. The page is a flex column, so the
+# stage takes whatever height the meta strip leaves; raising these only risks
+# clipping within the stage, never collision with the strip. Re-check the fit
+# anyway (see SKILL.md Verification).
 MAX_REFS_PER_SCENE = 3
 MAX_LINES_PER_REF = 2
 
@@ -198,17 +200,24 @@ def build_html(brief: dict) -> str:
   body {{
     margin:0; background:var(--bg); color:var(--ink);
     font:15px/1.5 "Inter",system-ui,-apple-system,"Segoe UI",sans-serif;
+    /* the page is a column: the stage takes what is left once the meta strip
+       has taken its own height, so the two can never overlap. The previous
+       design fixed the meta over the stage and had the cards reserve a guessed
+       30vh for it; a meta taller than the guess (three triggers rather than two)
+       covered the last card by 2px at 577px and 17px at 560px. */
+    display:flex; flex-direction:column; height:100vh; overflow:hidden;
   }}
   .stage {{
-    position:relative; height:100vh; display:grid; place-items:center;
+    position:relative; flex:1 1 auto; min-height:0; display:grid; place-items:center;
     overflow:hidden; background-image:
       linear-gradient(#111c33 1px,transparent 1px),
       linear-gradient(90deg,#111c33 1px,transparent 1px);
     background-size:40px 40px;
   }}
-  /* bottom inset reserves the meta strip so nothing is ever occluded */
+  /* in-flow now, so the card's bottom inset only has to clear the strip's top
+    margin — a small constant, not a percentage of a height we do not control */
   .scene {{
-    position:absolute; inset:7vh 6vw 30vh; padding:28px 32px; border-radius:14px;
+    position:absolute; inset:7vh 6vw 2vh; padding:28px 32px; border-radius:14px;
     overflow:auto;
     background:var(--card); border:1px solid color-mix(in srgb, var(--accent) 45%, #1e293b);
     box-shadow:0 0 0 1px #0f172a, 0 30px 80px -40px var(--accent);
@@ -242,7 +251,7 @@ def build_html(brief: dict) -> str:
     color:#475569;
   }}
   .meta {{
-    position:fixed; left:6vw; bottom:3vh; z-index:5; max-width:60ch;
+    flex:0 0 auto; left:6vw; margin:0 6vw 3vh; max-width:60ch;
     font:12px/1.6 ui-monospace,Menlo,monospace; color:#64748b;
   }}
   .meta h1 {{ font:600 15px/1.4 system-ui,sans-serif; color:var(--ink); margin:0 0 6px; }}
@@ -263,23 +272,25 @@ def build_html(brief: dict) -> str:
     .scene:nth-of-type(1) {{ animation:none; opacity:1; }}
     .bar {{ animation:none; }}
   }}
+  .static {{ overflow:visible; height:auto; }}
   .static .scene {{ animation:none; position:relative; opacity:1; visibility:visible;
     inset:auto; margin:4vh 6vw; overflow:visible; }}
-  .static .stage {{ height:auto; display:block; }}
+  .static .stage {{ flex:none; height:auto; display:block; }}
+  .static .meta {{ margin-bottom:4vh; }}
   .static .bar {{ display:none; }}
   /* short viewports: tighten type and refs so a beat never clips its content */
   @media (max-height: 760px) {{
-    .scene {{ inset:5vh 5vw 26vh; padding:18px 22px; }}
+    .scene {{ inset:5vh 5vw 2vh; padding:18px 22px; }}
     .scene-tag {{ padding:4px 8px; font-size:10px; }}
     .scene-headline {{ margin:10px 0 6px; font-size:clamp(18px,2.4vw,26px); }}
     .scene-detail {{ font-size:13px; }}
     .refs {{ margin-top:12px; gap:5px; }}
     .ref-line {{ padding:4px 8px; font-size:11px; line-height:1.35; }}
     .ref-path {{ font-size:11px; }}
-    .meta {{ font-size:11px; bottom:2vh; }}
+    .meta {{ font-size:11px; margin-bottom:2vh; }}
   }}
   @media (max-height: 560px) {{
-    .scene {{ inset:4vh 5vw 24vh; padding:14px 18px; }}
+    .scene {{ inset:4vh 5vw 2vh; padding:14px 18px; }}
     .refs .ref-line:nth-child(n+4) {{ display:none; }}
     .scene-headline {{ font-size:clamp(16px,2vw,22px); }}
   }}
