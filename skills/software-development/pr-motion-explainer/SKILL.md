@@ -62,23 +62,33 @@ python3 <skill-dir>/scripts/render.py brief.json --out pr-123-explainer.html
 `<skill-dir>` is this skill's directory, the parent of `scripts/`. Call
 `skill_view(name='pr-motion-explainer')` to read the exact path for the session.
 
-Use `--range origin/main...HEAD` instead of `--pr` for a local branch with no PR
-yet; the beat content is identical, only the byline differs.
+`--pr auto` resolves the PR open on the checked-out branch, so no trip to the
+browser for the number. Use `--range origin/main...HEAD` instead of `--pr` for
+a local branch with no PR yet; the beat content is identical, only the byline
+differs. Add `--offline` to a range run when the network is not available or
+should not be touched: `gh` is refused and every subprocess is bounded by a
+shorter timeout.
 
 ## Quick Reference
 
 | Command | Effect |
 |---|---|
 | `pr_brief.py --pr N [--repo o/n]` | brief from a GitHub PR (`gh pr view` + `gh pr diff`) |
+| `pr_brief.py --pr auto` | brief for the PR open on the current branch |
 | `pr_brief.py --range A...B` | brief from a local git range, no network |
+| `pr_brief.py --range A...B --offline` | same, plus a hard promise of no network |
 | `pr_brief.py ... --force` | emit beats even when the verdict is trivial |
 | `pr_brief.py ... --json-only` | suppress the human summary on stderr |
 | `render.py brief.json --out f.html` | animated timeline HTML |
 | `render.py brief.json --out f.html --static` | stacked scenes for print / a static image |
 | `render.py brief.json --mermaid --out m.md` | markdown mermaid beat chain, renders inline in the PR comment |
+| `render.py brief.json --github --out dir/ --sha <sha>` | the whole publish bundle: HTML, PNG, and a ready-to-post comment |
 | `poster.py brief.json --out p.png` | contact-sheet PNG for the PR comment, pure stdlib |
 
-Exit codes: `0` non-trivial, `3` trivial or empty diff, `1` fetch or usage error.
+Exit codes: `pr_brief.py` — `0` non-trivial, `3` trivial or empty diff, `1`
+fetch or usage error. `render.py` and `poster.py` — `0` rendered, `3` no beats,
+`2` brief is not schema v2, `1` the brief is stale (`--sha` disagrees with the
+sha it was gated from).
 
 
 ## Procedure
@@ -120,6 +130,14 @@ Exit codes: `0` non-trivial, `3` trivial or empty diff, `1` fetch or usage error
    HTML file itself. Completion criterion: the PR comment shows the diagram and
    the poster, and the links resolve from the branch you pushed.
 
+   One command does all of it:
+   `render.py brief.json --github --out docs/explainers/ --sha $(git rev-parse HEAD)`
+   writes the HTML, the PNG, and the comment with its raw URLs pinned to that
+   sha. The same sha is checked against the one the brief was gated from, so a
+   brief that has gone stale is refused instead of published. Still read the
+   comment before posting it: the part that matters is the sentence about what
+   the diff did, and no flag writes that.
+
 ## Beats
 
 | Beat | Content | Source |
@@ -153,9 +171,19 @@ Exit codes: `0` non-trivial, `3` trivial or empty diff, `1` fetch or usage error
   explainer will describe code that was never in the PR.
 - **`git range` beats have no PR number.** The byline falls back to the range
   string and the recap omits `#N`. Do not "fix" the missing number.
+- **A brief goes stale, and a stale brief lies.** The brief records the sha it
+  was gated from under `source.head_sha`. Publishing with `--sha` compares it to
+  the sha you are pinning to, so a brief generated before the branch moved is
+  refused with the two shas named. Without `--sha` there is nothing to check
+  against, and the bundle carries `<sha>` placeholders rather than a guess.
 
 ## Verification
 
+- **The suite**, which is what makes the rest of this list repeatable instead of
+  a ritual:
+  `python3 -m unittest discover -s tests -t .`
+  It covers the gate, the beats, the CLI, and the docs. CI runs it on Python
+  3.9, 3.11 and 3.13.
 - Gate: run `pr_brief.py` on a docs-only commit, on a one-line typo, and on a
   large lockfile-only bump; all three must exit `3`, and the reason must name
   the threshold the diff missed.
@@ -165,6 +193,7 @@ Exit codes: `0` non-trivial, `3` trivial or empty diff, `1` fetch or usage error
   `\x89PNG\r\n\x1a\n`. Open it once and look: text must sit inside its card, and
   a beat with no glyphs available must not turn into a row of empty boxes.
 - Browser: at each beat's midpoint exactly one card is visible, `scrollHeight`
-  equals `clientHeight`, and the card does not intersect `.meta`.
+  equals `clientHeight`, and the card does not intersect `.meta`. This one needs
+  a real browser, so it stays manual and CI does not cover it.
 - Publish: the link in the PR comment loads the file you pushed, not a local
   path.
