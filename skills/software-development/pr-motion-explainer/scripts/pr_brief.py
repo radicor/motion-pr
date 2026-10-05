@@ -10,12 +10,18 @@ Two jobs, one JSON shape:
 Usage
 -----
     pr_brief.py --pr 123                       # via gh
+    pr_brief.py --pr auto                      # the current branch's PR
     pr_brief.py --pr 123 --repo owner/name
     pr_brief.py --range origin/main...HEAD     # local, no network
+    pr_brief.py --range origin/main...HEAD --offline
     pr_brief.py --pr 123 --json-only           # stdout JSON, no human header
 
 Output: JSON on stdout (a "storyboard brief"), human summary on stderr.
 Exit codes: 0 non-trivial, 3 trivial (skip), 1 usage/fetch error.
+
+The brief records the head sha it was gated from, and render.py --sha refuses to
+publish a brief whose diff has moved on, so an explainer cannot describe code
+that no longer matches it.
 
 No third-party dependencies: gh and git are invoked as subprocesses, all
 parsing is stdlib.
@@ -25,10 +31,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
 from pathlib import Path
+
+from brief_schema import SCHEMA_VERSION
 
 # --- non-triviality gate -------------------------------------------------
 
@@ -82,9 +91,37 @@ SIGNALS = [
     ("build or release", re.compile(r"(^|/)(build|release|ci|\.github)/|Makefile|Dockerfile", re.I)),
 ]
 
+# Bounds a single git/gh call. --offline tightens it because a hermetic run is
+# supposed to answer in seconds, and the only thing that could be slow about it
+# is a network call it was never meant to make.
+SUBPROCESS_TIMEOUT = 60
+OFFLINE_TIMEOUT = 15
 
-def run(cmd: list[str], cwd: str | None = None) -> tuple[int, str, str]:
-    p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+# Set from --offline in main(); module-level so run() sees it without threading
+# a flag through every fetcher.
+OFFLINE = False
+
+
+# git and gh wait on a person when they could just answer. Both honour these.
+SAFE_ENV = {"GIT_PAGER": "cat", "GH_PAGER": "cat", "GIT_TERMINAL_PROMPT": "0"}
+
+
+def run(cmd: list[str], cwd: str | None = None, timeout: int | None = None) -> tuple[int, str, str]:
+    """Run a subprocess with a bound, or fail loudly instead of hanging.
+
+    A hanging call kills the whole session: a pager waits for a keypress, an
+    interactive credential prompt waits for input, a network stall waits for a
+    socket that may never answer. The env opts out of the first two and the
+    timeout bounds the third, so an unattended run reports a failure instead of
+    disappearing.
+    """
+    if timeout is None:
+        timeout = OFFLINE_TIMEOUT if OFFLINE else SUBPROCESS_TIMEOUT
+    try:
+        p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True,
+                           timeout=timeout, env={**os.environ, **SAFE_ENV})
+    except subprocess.TimeoutExpired:
+        return 124, "", f"timed out after {timeout}s: {' '.join(cmd)}"
     return p.returncode, p.stdout, p.stderr
 
 
@@ -390,8 +427,11 @@ def judge(pr: dict, diff_text: str, files: list[str]) -> dict:
         missed.append(f"sensitive path {sensitive[0]} but only {changed} changed lines "
                       f"< {MIN_LINES_FOR_SENSITIVE}")
     if deps and enough_mass:
+        # name the file, not the directory it sits in: the substitution removes
+        # the whole match, extension included, so `web/package.json` used to
+        # collapse to "web" and state the wrong dependency on screen
         triggers.append("dependency change: " + ", ".join(
-            DEPENDENCY_FILE.sub("", d).split("/")[0] or d for d in deps[:2]))
+            d.rsplit("/", 1)[-1] for d in deps[:2]))
     elif deps:
         missed.append(f"dependency change {deps[0]} but only {changed} changed lines "
                       f"< {MIN_LINES_FOR_SENSITIVE}")
@@ -419,6 +459,12 @@ def judge(pr: dict, diff_text: str, files: list[str]) -> dict:
         "files_ignored": ignorable,
         "signals": signals,
         "sensitive_paths": sensitive,
+        # `triggers` are what fired, `thresholds_missed` what did not. Both are
+        # exposed because the separation is load-bearing: a verdict is
+        # non-trivial exactly when `triggers` is non-empty, and `reasons` is
+        # `triggers` verbatim when it is. Keeping that checkable in the brief is
+        # what stops the two lists from being folded back together.
+        "triggers": triggers,
         "reasons": stated,
         "thresholds_missed": missed,
     }
@@ -427,9 +473,25 @@ def judge(pr: dict, diff_text: str, files: list[str]) -> dict:
 # --- fetchers ------------------------------------------------------------
 
 
+def resolve_pr_number(repo: str | None) -> str:
+    """The PR open for the checked-out branch, so `--pr auto` needs no lookups."""
+    cmd = ["gh", "pr", "view", "--json", "number"]
+    if repo:
+        cmd += ["--repo", repo]
+    rc, out, err = run(cmd)
+    if rc != 0:
+        sys.stderr.write(f"could not resolve a PR for this branch: {err.strip()}\n")
+        sys.exit(1)
+    try:
+        return str(json.loads(out)["number"])
+    except (json.JSONDecodeError, KeyError, TypeError):
+        sys.stderr.write(f"gh returned no PR number: {out.strip()!r}\n")
+        sys.exit(1)
+
+
 def fetch_pr(num: str, repo: str | None) -> tuple[dict, str]:
     base = ["gh", "pr", "view", num, "--json",
-            "number,title,body,author,baseRefName,headRefName,labels,additions,deletions,changedFiles,url"]
+            "number,title,body,author,baseRefName,headRefName,headRefOid,labels,additions,deletions,changedFiles,url"]
     if repo:
         base += ["--repo", repo]
     rc, out, err = run(base)
@@ -437,6 +499,10 @@ def fetch_pr(num: str, repo: str | None) -> tuple[dict, str]:
         sys.stderr.write(f"gh pr view failed: {err.strip()}\n")
         sys.exit(1)
     pr = json.loads(out)
+    # headRefOid is the commit the PR's head ref points at right now. It is what
+    # makes a brief falsifiable: render.py compares it to a caller-supplied sha
+    # and refuses to publish a brief whose diff has moved on.
+    pr["head_sha"] = pr.get("headRefOid")
     dcmd = ["gh", "pr", "diff", num]
     if repo:
         dcmd += ["--repo", repo]
@@ -458,6 +524,8 @@ def fetch_range(rng: str) -> tuple[dict, str]:
         sys.exit(1)
     parts = raw.split("\x1e")[0].split("\x1f")
     commit = parts[0]
+    # The range's tip is the head sha. For `--pr` this comes from headRefOid;
+    # here it is already in hand, so record it the same way.
     rc, diff, err = run(["git", "diff", rng])
     if rc != 0:
         sys.stderr.write(f"git diff failed: {err.strip()}\n")
@@ -466,6 +534,7 @@ def fetch_range(rng: str) -> tuple[dict, str]:
         "number": None,
         "title": parts[1] if len(parts) > 1 else "",
         "body": parts[2] if len(parts) > 2 else "",
+        "head_sha": commit or None,
         "labels": [],
         "author": {"login": ""},
         "url": "",
@@ -480,13 +549,23 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     g = ap.add_mutually_exclusive_group(required=True)
-    g.add_argument("--pr", help="PR number (fetched with gh)")
+    g.add_argument("--pr", help="PR number (fetched with gh), or `auto` for the current branch's PR")
     g.add_argument("--range", help="git range like origin/main...HEAD")
     ap.add_argument("--repo", help="owner/name for --pr")
     ap.add_argument("--out", help="write brief JSON here instead of stdout")
     ap.add_argument("--json-only", action="store_true", help="no human summary on stderr")
     ap.add_argument("--force", action="store_true", help="ignore the trivial verdict, still emit beats")
+    ap.add_argument("--offline", action="store_true",
+                    help="never touch the network: requires --range, and fails fast if git tries")
     args = ap.parse_args()
+
+    global OFFLINE
+    OFFLINE = args.offline
+
+    if args.offline and args.pr is not None:
+        ap.error("--offline needs --range; --pr and --pr auto both talk to GitHub")
+    if args.pr == "auto":
+        args.pr = resolve_pr_number(args.repo)
 
     if args.pr:
         pr, diff = fetch_pr(args.pr, args.repo)
@@ -503,6 +582,8 @@ def main() -> int:
         print(f"[{tag}] PR {pr.get('number')} {pr.get('title') or ''}", file=sys.stderr)
         for r in verdict["reasons"]:
             print(f"  - {r}", file=sys.stderr)
+        if pr.get("head_sha"):
+            print(f"  head {pr['head_sha'][:12]}", file=sys.stderr)
 
     beats = []
     if verdict["non_trivial"] or args.force:
@@ -510,10 +591,11 @@ def main() -> int:
                             verdict["added"], verdict["deleted"])
 
     brief = {
+        "schema": SCHEMA_VERSION,
         "source": {"pr": pr.get("number"), "url": pr.get("url"),
                    "title": pr.get("title"), "author": (pr.get("author") or {}).get("login"),
                    "base": pr.get("baseRefName"), "head": pr.get("headRefName"),
-                   "range": pr.get("range")},
+                   "head_sha": pr.get("head_sha"), "range": pr.get("range")},
         "verdict": verdict,
         "beats": beats,
         "beat_order": BEAT_ORDER,
